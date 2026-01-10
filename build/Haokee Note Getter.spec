@@ -2,7 +2,7 @@
 
 
 a = Analysis(
-    ['D:\\haokee-note-getter\\main.py'],
+    ['..\\main.py'],
     pathex=[],
     binaries=[],
     datas=[('D:\\haokee-note-getter\\resources', 'resources')],
@@ -10,7 +10,7 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    excludes=['PyQt5'],
     noarchive=False,
     optimize=0,
 )

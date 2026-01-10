@@ -1,12 +1,17 @@
 import sys
 import os
+
+# Force qtawesome to use PyQt6
+os.environ["QT_API"] = "pyqt6"
+
 import requests
 import qtawesome as qta
+import markdown
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
                              QTreeWidget, QTreeWidgetItem, QListWidget, QListWidgetItem, 
                              QPushButton, QLabel, QProgressBar, QSplitter, QFileDialog, 
-                             QFrame, QLineEdit, QDialog, QGraphicsDropShadowEffect, QCheckBox)
-from PyQt6.QtCore import Qt, QThread, pyqtSignal, QPoint, QSize, QPropertyAnimation, QEasingCurve, QEvent
+                             QFrame, QLineEdit, QDialog, QGraphicsDropShadowEffect, QCheckBox, QTextEdit, QAbstractItemView)
+from PyQt6.QtCore import Qt, QThread, pyqtSignal, QPoint, QSize, QPropertyAnimation, QEasingCurve, QEvent, QVariantAnimation, QObject
 from PyQt6.QtGui import QIcon, QFont, QColor, QPalette, QBrush
 
 from scraper import HaokeeScraper
@@ -39,14 +44,14 @@ QWidget {{
 QScrollBar:vertical {{
     border: none;
     background: #F0F0F0;
-    width: 8px;
+    width: 10px;
     margin: 0px 0px 0px 0px;
-    border-radius: 4px;
+    border-radius: 5px;
 }}
 QScrollBar::handle:vertical {{
     background: #CCCCCC;
     min-height: 20px;
-    border-radius: 4px;
+    border-radius: 5px;
 }}
 QScrollBar::handle:vertical:hover {{
     background: #AAAAAA;
@@ -54,14 +59,26 @@ QScrollBar::handle:vertical:hover {{
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
     height: 0px;
 }}
+QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
+    background: none;
+}}
 
-/* TreeWidget & ListWidget */
-QTreeWidget, QListWidget {{
+/* TreeWidget & ListWidget & TextEdit */
+QTreeWidget, QListWidget, QTextEdit {{
     background-color: rgba(255, 255, 255, 0.8);
     border: 1px solid #E0E0E0;
     border-radius: 8px;
-    padding: 5px;
+    padding: 2px;
     outline: none;
+}}
+#PreviewText {{
+    background-color: #FFFFFF;
+    border: 1px solid #E0E0E0;
+    border-radius: 6px;
+    padding: 5px;
+}}
+QTreeWidget, QListWidget {{
+    padding: 5px;
     show-decoration-selected: 0;
 }}
 QTreeWidget::item, QListWidget::item {{
@@ -162,9 +179,9 @@ QCheckBox {{
     color: #333333;
 }}
 QCheckBox::indicator {{
-    width: 18px;
-    height: 18px;
-    border-radius: 4px;
+    width: 14px;
+    height: 14px;
+    border-radius: 3px;
     border: 1px solid #D0D0D0;
     background: #FFFFFF;
 }}
@@ -200,6 +217,7 @@ QCheckBox::indicator:checked {{
 #TitleBar QPushButton#closeBtn:hover {{
     background-color: #E81123;
     color: white;
+    border-top-right-radius: 10px;
 }}
 """
 
@@ -224,7 +242,7 @@ class InitThread(QThread):
             self.error_signal.emit(str(e))
 
 class FetchContentThread(QThread):
-    finished_signal = pyqtSignal(list)
+    finished_signal = pyqtSignal(str, list)
     error_signal = pyqtSignal(str)
 
     def __init__(self, scraper, path):
@@ -236,7 +254,7 @@ class FetchContentThread(QThread):
         try:
             content = self.scraper.get_page_content(self.path)
             media = self.scraper.extract_media(content)
-            self.finished_signal.emit(media)
+            self.finished_signal.emit(content, media)
         except Exception as e:
             self.error_signal.emit(str(e))
 
@@ -367,6 +385,7 @@ class CustomMessageBox(QDialog):
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Dialog)
         self.resize(350, 200)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setWindowOpacity(0) # Start invisible for animation
         
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -431,12 +450,31 @@ class CustomMessageBox(QDialog):
         inner_layout.addWidget(content_widget)
         inner_layout.addStretch()
 
+    def showEvent(self, event):
+        self.anim = QPropertyAnimation(self, b"windowOpacity")
+        self.anim.setDuration(250)
+        self.anim.setStartValue(0)
+        self.anim.setEndValue(1)
+        self.anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self.anim.start()
+        super().showEvent(event)
+
+    def done(self, r):
+        self.anim_close = QPropertyAnimation(self, b"windowOpacity")
+        self.anim_close.setDuration(200)
+        self.anim_close.setStartValue(1)
+        self.anim_close.setEndValue(0)
+        self.anim_close.setEasingCurve(QEasingCurve.Type.InCubic)
+        self.anim_close.finished.connect(lambda: super(CustomMessageBox, self).done(r))
+        self.anim_close.start()
+
 class HelpDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.Dialog)
         self.resize(400, 300)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setWindowOpacity(0)
         
         layout = QVBoxLayout(self)
         layout.setContentsMargins(10, 10, 10, 10) # Padding for shadow
@@ -470,13 +508,13 @@ class HelpDialog(QDialog):
         
         content = QLabel(
             "<h2>Haokee Note 下载器</h2>"
-            "<p>版本: 1.3.0 (Light Mode)</p>"
-            "<p>这是一个用于从 Haokee Note 网站下载媒体文件的工具。</p>"
+            "<p>版本: 1.5.0 (Light Mode)</p>"
+            "<p>这是一个用于从 Haokee Note 网站浏览、预览及下载资源的现代化工具。</p>"
             "<ul>"
-            "<li><b>左侧栏</b>: 浏览文章目录。勾选'显示媒体文件'可查看所有文件。</li>"
-            "<li><b>右侧栏</b>: 查看选中文章中的媒体文件。</li>"
-            "<li><b>下载此文件</b>: 直接下载选中的文件。</li>"
-            "<li><b>下载选定媒体</b>: 下载文章中引用的媒体。</li>"
+            "<li><b>文章浏览</b>: 左侧树状目录浏览文章，支持 .md 文件及媒体资源。</li>"
+            "<li><b>智能预览</b>: 右侧实时渲染 Markdown 文档，支持代码高亮；可预览文本源码。</li>"
+            "<li><b>媒体下载</b>: 自动提取文章中的图片、音频、视频，支持批量下载。</li>"
+            "<li><b>交互体验</b>: 现代化 UI 设计，支持平滑动画与窗口自由拖拽。</li>"
             "</ul>"
             "<p>作者: Gemini 3 Pro & Haokee</p>"
         )
@@ -486,6 +524,77 @@ class HelpDialog(QDialog):
         inner_layout.addWidget(content)
         inner_layout.addStretch()
 
+    def showEvent(self, event):
+        self.anim = QPropertyAnimation(self, b"windowOpacity")
+        self.anim.setDuration(250)
+        self.anim.setStartValue(0)
+        self.anim.setEndValue(1)
+        self.anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self.anim.start()
+        super().showEvent(event)
+
+    def done(self, r):
+        self.anim_close = QPropertyAnimation(self, b"windowOpacity")
+        self.anim_close.setDuration(200)
+        self.anim_close.setStartValue(1)
+        self.anim_close.setEndValue(0)
+        self.anim_close.setEasingCurve(QEasingCurve.Type.InCubic)
+        self.anim_close.finished.connect(lambda: super(HelpDialog, self).done(r))
+        self.anim_close.start()
+
+class SmoothScroll(QObject):
+    def __init__(self, widget, step_factor=1.2):
+        super().__init__(widget)
+        self.widget = widget
+        self.step_factor = step_factor
+        self.animation = QVariantAnimation()
+        self.animation.setDuration(300)
+        self.animation.setEasingCurve(QEasingCurve.Type.OutQuad)
+        self.animation.valueChanged.connect(self.on_value_changed)
+        
+        self.scroll_bar = widget.verticalScrollBar()
+        self.target_value = self.scroll_bar.value()
+        
+        # Install filter on viewport
+        widget.viewport().installEventFilter(self)
+
+    def eventFilter(self, obj, event):
+        if event.type() == QEvent.Type.Wheel:
+            if not self.scroll_bar.isVisible():
+                return False
+            
+            delta = event.angleDelta().y()
+            # If shift is pressed, it might be horizontal scroll, ignore or handle
+            if event.angleDelta().x() != 0:
+                return False
+
+            # Calculate step
+            # Standard wheel delta is 120. 
+            # We want to map this to a reasonable pixel distance.
+            # Default scroll per pixel is often too slow or too fast depending on implementation.
+            # Let's say 120 delta -> 60 pixels.
+            step = -delta * self.step_factor
+            
+            # Update target
+            if self.animation.state() == QVariantAnimation.State.Running:
+                self.animation.stop()
+            else:
+                self.target_value = self.scroll_bar.value()
+
+            self.target_value = min(max(self.target_value + step, self.scroll_bar.minimum()), self.scroll_bar.maximum())
+            
+            self.animation.setStartValue(float(self.scroll_bar.value()))
+            self.animation.setEndValue(float(self.target_value))
+            self.animation.start()
+            
+            return True # Consume event
+            
+        return False
+
+    def on_value_changed(self, value):
+        if value is not None:
+            self.scroll_bar.setValue(int(value))
+
 # =============================================================================
 # Main Window
 # =============================================================================
@@ -493,7 +602,7 @@ class HelpDialog(QDialog):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Haokee Note 媒体下载器")
+        self.setWindowTitle("Haokee Note 下载器")
         self.resize(1000, 600)
         
         # Frameless Window
@@ -507,6 +616,14 @@ class MainWindow(QMainWindow):
         
         self.scraper = HaokeeScraper()
         self.cache_data = {} # Store directory cache
+
+        # Resize Logic
+        self._gripSize = 5
+        self._moving = False
+        self._resizing = False
+        self._drag_pos = None
+        self._resize_edge = None
+        self.setMouseTracking(True)
         
         self.setup_ui()
         self.start_initialization()
@@ -515,6 +632,7 @@ class MainWindow(QMainWindow):
         # Main Container
         self.main_container = QFrame()
         self.main_container.setObjectName("MainContainer")
+        self.main_container.setMouseTracking(True)
         self.main_container.setStyleSheet("""
             #MainContainer {
                 background-color: #F9F9F9; /* Light background */
@@ -543,7 +661,7 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(self.wrapper)
 
         # Title Bar
-        self.title_bar = CustomTitleBar(self, "Haokee Note 媒体下载器")
+        self.title_bar = CustomTitleBar(self, "Haokee Note 下载器")
         self.main_layout.addWidget(self.title_bar)
         
         # Content Area
@@ -580,6 +698,9 @@ class MainWindow(QMainWindow):
         self.tree_widget.setHeaderHidden(True)
         self.tree_widget.itemSelectionChanged.connect(self.on_tree_selection_changed)
         self.tree_widget.setIconSize(QSize(20, 20))
+        # Smooth Scroll Setup
+        self.tree_widget.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+        self.smooth_scroll_tree = SmoothScroll(self.tree_widget, step_factor=0.5) # Slower speed
         left_layout.addWidget(self.tree_widget)
         
         # Download This File Button
@@ -595,14 +716,47 @@ class MainWindow(QMainWindow):
         right_layout = QVBoxLayout(right_widget)
         right_layout.setContentsMargins(10, 0, 0, 0)
         
+        # Vertical Splitter
+        self.right_splitter = QSplitter(Qt.Orientation.Vertical)
+        
+        # 1. Preview Area
+        self.preview_widget = QWidget()
+        preview_layout = QVBoxLayout(self.preview_widget)
+        preview_layout.setContentsMargins(0, 0, 0, 0)
+        
+        preview_label = QLabel("文件预览")
+        preview_label.setFont(QFont("Segoe UI", 12, QFont.Weight.Bold))
+        preview_layout.addWidget(preview_label)
+        
+        self.preview_text = QTextEdit()
+        self.preview_text.setObjectName("PreviewText")
+        self.preview_text.setReadOnly(True)
+        # Smooth Scroll Setup
+        self.smooth_scroll_preview = SmoothScroll(self.preview_text, step_factor=0.5) # Slower speed
+        preview_layout.addWidget(self.preview_text)
+        
+        self.preview_widget.setVisible(False)
+        self.right_splitter.addWidget(self.preview_widget)
+        
+        # 2. Media Area
+        self.media_widget = QWidget()
+        media_layout = QVBoxLayout(self.media_widget)
+        media_layout.setContentsMargins(0, 0, 0, 0)
+
         right_label = QLabel("媒体文件")
         right_label.setFont(QFont("Segoe UI", 12, QFont.Weight.Bold))
-        right_layout.addWidget(right_label)
+        media_layout.addWidget(right_label)
         
         self.media_list = QListWidget()
         self.media_list.setSelectionMode(QListWidget.SelectionMode.ExtendedSelection)
         self.media_list.setIconSize(QSize(24, 24))
-        right_layout.addWidget(self.media_list)
+        # Smooth Scroll Setup
+        self.media_list.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
+        self.smooth_scroll_media = SmoothScroll(self.media_list, step_factor=0.5) # Slower speed
+        media_layout.addWidget(self.media_list)
+        
+        self.right_splitter.addWidget(self.media_widget)
+        right_layout.addWidget(self.right_splitter)
         
         # Download Path
         path_layout = QHBoxLayout()
@@ -611,6 +765,7 @@ class MainWindow(QMainWindow):
         
         self.path_input = QLineEdit()
         self.path_input.setReadOnly(False)
+        self.path_input.setFixedHeight(32)
         default_download = os.path.join(os.path.expanduser("~"), "Downloads")
         self.path_input.setText(default_download)
         path_layout.addWidget(self.path_input)
@@ -618,6 +773,7 @@ class MainWindow(QMainWindow):
         self.browse_btn = QPushButton()
         self.browse_btn.setIcon(qta.icon('fa5s.folder-open', color='#333333'))
         self.browse_btn.setToolTip("选择文件夹")
+        self.browse_btn.setFixedHeight(32)
         self.browse_btn.clicked.connect(self.browse_folder)
         path_layout.addWidget(self.browse_btn)
         
@@ -661,6 +817,87 @@ class MainWindow(QMainWindow):
         status_layout.addWidget(self.progress_bar)
         
         content_layout.addLayout(status_layout)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            edge = self._check_edge(event.pos())
+            if edge:
+                self._resizing = True
+                self._resize_edge = edge
+                self._drag_pos = event.globalPosition().toPoint()
+                return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self._resizing:
+            self._handle_resize(event.globalPosition().toPoint())
+            return
+            
+        edge = self._check_edge(event.pos())
+        if edge:
+            if edge in ['top', 'bottom']:
+                self.setCursor(Qt.CursorShape.SizeVerCursor)
+            elif edge in ['left', 'right']:
+                self.setCursor(Qt.CursorShape.SizeHorCursor)
+            elif edge in ['top_left', 'bottom_right']:
+                self.setCursor(Qt.CursorShape.SizeFDiagCursor)
+            elif edge in ['top_right', 'bottom_left']:
+                self.setCursor(Qt.CursorShape.SizeBDiagCursor)
+        else:
+            self.setCursor(Qt.CursorShape.ArrowCursor)
+            
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        self._resizing = False
+        self._resize_edge = None
+        self.setCursor(Qt.CursorShape.ArrowCursor)
+        super().mouseReleaseEvent(event)
+        
+    def _check_edge(self, pos):
+        r = self.rect()
+        x, y, w, h = pos.x(), pos.y(), r.width(), r.height()
+        m = 5 
+        
+        on_left = x < m
+        on_right = x > w - m
+        on_top = y < m
+        on_bottom = y > h - m
+        
+        if on_top and on_left: return 'top_left'
+        if on_top and on_right: return 'top_right'
+        if on_bottom and on_left: return 'bottom_left'
+        if on_bottom and on_right: return 'bottom_right'
+        if on_top: return 'top'
+        if on_bottom: return 'bottom'
+        if on_left: return 'left'
+        if on_right: return 'right'
+        return None
+
+    def _handle_resize(self, global_pos):
+        diff = global_pos - self._drag_pos
+        self._drag_pos = global_pos
+        
+        geo = self.geometry()
+        
+        if 'left' in self._resize_edge:
+            new_w = geo.width() - diff.x()
+            if new_w > self.minimumWidth():
+                geo.setLeft(geo.left() + diff.x())
+        if 'right' in self._resize_edge:
+            new_w = geo.width() + diff.x()
+            if new_w > self.minimumWidth():
+                geo.setWidth(new_w)
+        if 'top' in self._resize_edge:
+            new_h = geo.height() - diff.y()
+            if new_h > self.minimumHeight():
+                geo.setTop(geo.top() + diff.y())
+        if 'bottom' in self._resize_edge:
+            new_h = geo.height() + diff.y()
+            if new_h > self.minimumHeight():
+                geo.setHeight(new_h)
+                
+        self.setGeometry(geo)
 
     def changeEvent(self, event):
         if event.type() == QEvent.Type.WindowStateChange:
@@ -780,9 +1017,9 @@ class MainWindow(QMainWindow):
 
             sorted_keys = sorted(structure.keys(), key=sort_key)
             
-            folder_icon = qta.icon('fa5s.folder', color='#FFD700')
-            file_icon = qta.icon('fa5s.file-alt', color='#4FC1FF')
-            media_icon = qta.icon('fa5s.image', color='#B48EAD')
+            folder_icon = qta.icon('fa5s.folder', color='#FBC02D')
+            file_icon = qta.icon('fa5s.file-alt', color='#42A5F5')
+            media_icon = qta.icon('fa5s.image', color='#AB47BC')
 
             for key in sorted_keys:
                 full_path = f"{current_path_prefix}/{key}" if current_path_prefix else key
@@ -820,10 +1057,12 @@ class MainWindow(QMainWindow):
         is_file = path in self.cache_data
         self.download_file_btn.setEnabled(is_file)
         
-        if path.endswith('.md'):
+        ext = path.split('.')[-1].lower() if '.' in path else ''
+        if ext in ['md', 'js', 'css', 'html', 'json', 'txt', 'py', 'xml']:
             self.fetch_content(path)
         else:
             self.media_list.clear()
+            self.preview_widget.setVisible(False)
             self.status_label.setText(f"已选择: {path}")
             self.status_icon.clear()
 
@@ -833,19 +1072,47 @@ class MainWindow(QMainWindow):
         self.media_list.clear()
         
         self.fetch_thread = FetchContentThread(self.scraper, path)
-        self.fetch_thread.finished_signal.connect(self.on_content_fetched)
+        self.fetch_thread.finished_signal.connect(lambda content, media: self.on_content_fetched(content, media, path))
         self.fetch_thread.error_signal.connect(self.on_content_error)
         self.fetch_thread.start()
 
-    def on_content_fetched(self, media_files):
+    def on_content_fetched(self, content, media_files, path=""):
         self.status_label.setText(f"发现 {len(media_files)} 个媒体文件。")
         self.status_icon.setPixmap(qta.icon('fa5s.check-circle', color='#107C10').pixmap(16, 16))
         self.media_list.clear()
         
-        img_icon = qta.icon('fa5s.image', color='#B48EAD')
-        audio_icon = qta.icon('fa5s.music', color='#A3BE8C')
-        video_icon = qta.icon('fa5s.video', color='#BF616A')
-        file_icon = qta.icon('fa5s.file', color='#88C0D0')
+        # Show Preview
+        self.preview_widget.setVisible(True)
+        
+        if path.lower().endswith('.md'):
+            html = markdown.markdown(content, extensions=['extra', 'nl2br', 'codehilite'])
+            # Add some basic CSS for better look
+            style = """
+            <style>
+            body { font-family: 'Segoe UI', sans-serif; color: #333; line-height: 1.6; }
+            h1, h2, h3 { color: #0078D4; }
+            code { background-color: #f0f0f0; padding: 2px 4px; border-radius: 4px; font-family: Consolas, monospace; }
+            pre { background-color: #f6f8fa; padding: 10px; border-radius: 6px; overflow: auto; }
+            blockquote { border-left: 4px solid #dfe2e5; color: #6a737d; padding-left: 10px; margin: 0; }
+            a { color: #0078D4; text-decoration: none; }
+            img { max-width: 100%; }
+            </style>
+            """
+            self.preview_text.setHtml(style + html)
+        else:
+            self.preview_text.setText(content)
+        
+        # Adjust splitter if needed, but let user decide or default 50/50
+        # If media files are empty, maybe give more space to preview?
+        if not media_files:
+             self.right_splitter.setSizes([500, 100])
+        else:
+             self.right_splitter.setSizes([300, 300])
+
+        img_icon = qta.icon('fa5s.image', color='#AB47BC')
+        audio_icon = qta.icon('fa5s.music', color='#66BB6A')
+        video_icon = qta.icon('fa5s.video', color='#EF5350')
+        file_icon = qta.icon('fa5s.file', color='#42A5F5')
 
         for media in media_files:
             item = QListWidgetItem(f"{media['name']} ({media['type']})")
